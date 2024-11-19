@@ -1,5 +1,1 @@
-node_modules/
-*.map
-.prettierignore
-tsconfig.tsbuildinfo
-*~
+./node_modules

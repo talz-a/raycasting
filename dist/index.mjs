@@ -1,4 +1,5 @@
 const FACTOR = 80;
+const PLAYER_SPEED = 2;
 class Color {
     r;
     g;
@@ -46,6 +47,9 @@ class Vector2 {
     static zero() {
         return new Vector2(0, 0);
     }
+    static fromAngle(angle) {
+        return new Vector2(Math.cos(angle), Math.sin(angle));
+    }
     clone() {
         return new Vector2(this.x, this.y);
     }
@@ -62,13 +66,53 @@ class Vector2 {
         this.y += that.y;
         return this;
     }
+    sub(that) {
+        this.x -= that.x;
+        this.y -= that.y;
+        return this;
+    }
     div(that) {
         this.x /= that.x;
         this.y /= that.y;
         return this;
     }
+    mul(that) {
+        this.x *= that.x;
+        this.y *= that.y;
+        return this;
+    }
 }
-function renderMinimap(ctx, minimapPosition, minimapSize, scene) {
+class Player {
+    position;
+    direction;
+    constructor(position, direction) {
+        this.position = position;
+        this.direction = direction;
+    }
+}
+function fillCircle(ctx, center, radius) {
+    ctx.beginPath();
+    ctx.arc(...center.array(), radius, 0, 2 * Math.PI);
+    ctx.fill();
+}
+function strokeLine(ctx, p1, p2) {
+    ctx.beginPath();
+    ctx.moveTo(...p1.array());
+    ctx.lineTo(...p2.array());
+    ctx.stroke();
+}
+function sceneSize(scene) {
+    const y = scene.length;
+    let x = Number.MIN_VALUE;
+    for (let row of scene) {
+        x = Math.max(x, row.length);
+    }
+    return new Vector2(x, y);
+}
+function canvasSize(ctx) {
+    return new Vector2(ctx.canvas.width, ctx.canvas.height);
+}
+function renderMinimap(ctx, player, minimapPosition, minimapSize, scene) {
     ctx.save();
     const gridSize = sceneSize(scene);
     ctx.translate(...minimapPosition.array());
@@ -92,24 +136,9 @@ function renderMinimap(ctx, minimapPosition, minimapSize, scene) {
     for (let y = 0; y <= gridSize.y; ++y) {
         strokeLine(ctx, new Vector2(0, y), new Vector2(gridSize.x, y));
     }
+    ctx.fillStyle = "magenta";
+    fillCircle(ctx, player.position, 0.3);
     ctx.restore();
-}
-function sceneSize(scene) {
-    const y = scene.length;
-    let x = Number.MIN_VALUE;
-    for (let row of scene) {
-        x = Math.max(x, row.length);
-    }
-    return new Vector2(x, y);
-}
-function strokeLine(ctx, p1, p2) {
-    ctx.beginPath();
-    ctx.moveTo(...p1.array());
-    ctx.lineTo(...p2.array());
-    ctx.stroke();
-}
-function canvasSize(ctx) {
-    return new Vector2(ctx.canvas.width, ctx.canvas.height);
 }
 const scene = [
     [null, null, Color.cyan(), Color.purple(), null, null, null, null, null],
@@ -140,12 +169,79 @@ const scene = [
     if (!ctx)
         throw new Error("ERROR: 2d context not supported");
     ctx.imageSmoothingEnabled = false;
-    ctx.fillStyle = "#181818";
+    ctx.fillStyle = "#121212";
     ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
     const minimapPosition = Vector2.zero().add(canvasSize(ctx).scale(0.03));
     const cellSize = ctx.canvas.width * 0.03;
     const minimapSize = sceneSize(scene).scale(cellSize);
-    renderMinimap(ctx, minimapPosition, minimapSize, scene);
+    const player = new Player(sceneSize(scene).mul(new Vector2(0.63, 0.63)), Math.PI * 1.25);
+    let movingForward = false;
+    let movingBackward = false;
+    let turningRight = false;
+    let turningLeft = false;
+    window.addEventListener("keydown", (e) => {
+        if (!e.repeat) {
+            switch (e.code) {
+                case "KeyW":
+                    movingForward = true;
+                    break;
+                case "KeyS":
+                    movingBackward = true;
+                    break;
+                case "KeyA":
+                    turningLeft = true;
+                    break;
+                case "KeyD":
+                    turningRight = true;
+                    break;
+            }
+        }
+    });
+    window.addEventListener("keyup", (e) => {
+        if (!e.repeat) {
+            switch (e.code) {
+                case "KeyW":
+                    movingForward = false;
+                    break;
+                case "KeyS":
+                    movingBackward = false;
+                    break;
+                case "KeyA":
+                    turningLeft = false;
+                    break;
+                case "KeyD":
+                    turningRight = false;
+                    break;
+            }
+        }
+    });
+    let prevTimestamp = 0;
+    const frame = (timestamp) => {
+        const deltaTime = (timestamp - prevTimestamp) / 1000;
+        prevTimestamp = timestamp;
+        let velocity = Vector2.zero();
+        let angularVelocity = 0.0;
+        if (movingForward) {
+            velocity.add(Vector2.fromAngle(player.direction).scale(PLAYER_SPEED));
+        }
+        if (movingBackward) {
+            velocity.sub(Vector2.fromAngle(player.direction).scale(PLAYER_SPEED));
+        }
+        if (turningLeft) {
+            angularVelocity -= Math.PI;
+        }
+        if (turningRight) {
+            angularVelocity += Math.PI;
+        }
+        player.direction = player.direction + angularVelocity * deltaTime;
+        player.position.add(velocity.clone().scale(deltaTime));
+        renderMinimap(ctx, player, minimapPosition, minimapSize, scene);
+        window.requestAnimationFrame(frame);
+    };
+    window.requestAnimationFrame((timestamp) => {
+        prevTimestamp = timestamp;
+        window.requestAnimationFrame(frame);
+    });
 })();
 export {};
 //# sourceMappingURL=index.mjs.map

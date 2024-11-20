@@ -1,5 +1,7 @@
 const FACTOR = 80;
 const PLAYER_SPEED = 2;
+const NEAR_CLIPPING_PLANE = 1.0;
+const FOV = Math.PI * 0.5;
 
 class Color {
     r: number;
@@ -60,6 +62,9 @@ class Vector2 {
     array(): [number, number] {
         return [this.x, this.y];
     }
+    length(): number {
+        return Math.sqrt(this.x ** 2 + this.y ** 2);
+    }
     scale(value: number): this {
         this.x *= value;
         this.y *= value;
@@ -85,6 +90,17 @@ class Vector2 {
         this.y *= that.y;
         return this;
     }
+    norm(): Vector2 {
+        const l = this.length();
+        if (l === 0) return Vector2.zero();
+        return new Vector2(this.x / l, this.y / l);
+    }
+    rot90(): this {
+        const temp = this.x;
+        this.x = -this.y;
+        this.y = temp;
+        return this;
+    }
 }
 
 class Player {
@@ -93,6 +109,21 @@ class Player {
     constructor(position: Vector2, direction: number) {
         this.position = position;
         this.direction = direction;
+    }
+    fovRange(): [Vector2, Vector2] {
+        const p = this.position
+            .clone()
+            .add(Vector2.fromAngle(this.direction).scale(NEAR_CLIPPING_PLANE));
+        const offsetLength = Math.tan(FOV * 0.5) * NEAR_CLIPPING_PLANE;
+        const directionVector = Vector2.fromAngle(this.direction);
+        const scaledPerp = directionVector
+            .clone()
+            .rot90()
+            .norm()
+            .scale(offsetLength);
+        const p1 = p.clone().sub(scaledPerp);
+        const p2 = p.clone().add(scaledPerp);
+        return [p1, p2];
     }
 }
 
@@ -164,6 +195,13 @@ function renderMinimap(
 
     ctx.fillStyle = "magenta";
     fillCircle(ctx, player.position, 0.3);
+    const [p1, p2] = player.fovRange();
+
+    ctx.strokeStyle = "magenta";
+    strokeLine(ctx, p1, p2);
+    strokeLine(ctx, player.position, p1);
+    strokeLine(ctx, player.position, p2);
+
     ctx.restore();
 }
 

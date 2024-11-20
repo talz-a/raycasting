@@ -1,7 +1,11 @@
-const FACTOR = 80;
+const EPS = 1e-6;
 const PLAYER_SPEED = 2;
-const NEAR_CLIPPING_PLANE = 1.0;
+const NEAR_CLIPPING_PLANE = 0.5;
+const FAR_CLIPPING_PLANE = 20;
 const FOV = Math.PI * 0.5;
+const SCREEN_FACTOR = 10;
+const SCREEN_WIDTH = Math.floor(16 * SCREEN_FACTOR);
+const SCREEN_HEIGHT = Math.floor(9 * SCREEN_FACTOR);
 
 class Color {
     r: number;
@@ -32,6 +36,14 @@ class Color {
     static cyan(): Color {
         return new Color(0, 1, 1, 1);
     }
+    brightness(factor: number): Color {
+        return new Color(
+            factor * this.r,
+            factor * this.g,
+            factor * this.b,
+            this.a,
+        );
+    }
     toStyle(): string {
         return (
             `rgba(` +
@@ -59,6 +71,12 @@ class Vector2 {
     clone(): Vector2 {
         return new Vector2(this.x, this.y);
     }
+    sqrLength(): number {
+        return this.x ** 2 + this.y ** 2;
+    }
+    sqrDistanceTo(that: Vector2): number {
+        return that.clone().sub(this).sqrLength();
+    }
     array(): [number, number] {
         return [this.x, this.y];
     }
@@ -84,6 +102,15 @@ class Vector2 {
         this.x /= that.x;
         this.y /= that.y;
         return this;
+    }
+    lerp(that: Vector2, t: number): Vector2 {
+        return new Vector2(
+            this.x + (that.x - this.x) * t,
+            this.y + (that.y - this.y) * t,
+        );
+    }
+    dot(that: Vector2): number {
+        return this.x * that.x + this.y * that.y;
     }
     mul(that: Vector2): this {
         this.x *= that.x;
@@ -177,7 +204,7 @@ function renderMinimap(
     ctx.lineWidth = 0.1;
     for (let y = 0; y < gridSize.x; y++) {
         for (let x = 0; x < gridSize.y; x++) {
-            const color = scene[x][y];
+            const color = scene[y][x];
             if (color !== null) {
                 ctx.fillStyle = color.toStyle();
                 ctx.fillRect(x, y, 1, 1);
@@ -205,6 +232,113 @@ function renderMinimap(
     ctx.restore();
 }
 
+function hittingCell(p1: Vector2, p2: Vector2): Vector2 {
+    const d = p2.clone().sub(p1);
+    return new Vector2(
+        Math.floor(p2.x + Math.sign(d.x) * EPS),
+        Math.floor(p2.y + Math.sign(d.y) * EPS),
+    );
+}
+
+function insideScene(scene: Scene, p: Vector2): boolean {
+    const size = sceneSize(scene);
+    return 0 <= p.x && p.x < size.x && 0 <= p.y && p.y < size.y;
+}
+
+function snap(x: number, dx: number): number {
+    if (dx > 0) return Math.ceil(x + Math.sign(dx) * EPS);
+    if (dx < 0) return Math.floor(x + Math.sign(dx) * EPS);
+    return x;
+}
+
+function rayStep(p1: Vector2, p2: Vector2): Vector2 {
+    const d = p2.clone().sub(p1);
+    let p3 = p2;
+
+    if (d.x !== 0) {
+        const k = d.y / d.x;
+        const c = p1.y - k * p1.x;
+        const x3 = snap(p2.x, d.x);
+        const y3 = k * x3 + c;
+        p3 = new Vector2(x3, y3);
+        if (k !== 0) {
+            const y3 = snap(p2.y, d.y);
+            const x3 = (y3 - c) / k;
+            const p3Candidate = new Vector2(x3, y3);
+            if (p2.sqrDistanceTo(p3Candidate) < p2.sqrDistanceTo(p3)) {
+                p3 = p3Candidate;
+            }
+        }
+    } else {
+        const y3 = snap(p2.y, d.y);
+        const x3 = p2.x;
+        p3 = new Vector2(x3, y3);
+    }
+
+    return p3;
+}
+
+function castRay(scene: Scene, p1: Vector2, p2: Vector2): Vector2 {
+    let start = p1;
+    while (start.sqrDistanceTo(p1) < FAR_CLIPPING_PLANE * FAR_CLIPPING_PLANE) {
+        const c = hittingCell(p1, p2);
+        if (insideScene(scene, c) && scene[c.y][c.x] !== null) break;
+        const p3 = rayStep(p1, p2);
+        p1 = p2;
+        p2 = p3;
+    }
+    return p2;
+}
+
+function renderScene(
+    ctx: CanvasRenderingContext2D,
+    player: Player,
+    scene: Scene,
+) {
+    ctx.save();
+    ctx.scale(
+        ctx.canvas.width / SCREEN_WIDTH,
+        ctx.canvas.height / SCREEN_HEIGHT,
+    );
+    const [r1, r2] = player.fovRange();
+    for (let x = 0; x < SCREEN_WIDTH; ++x) {
+        const p = castRay(
+            scene,
+            player.position,
+            r1.lerp(r2, x / SCREEN_WIDTH),
+        );
+        const c = hittingCell(player.position, p);
+        if (insideScene(scene, c)) {
+            const color = scene[c.y][c.x];
+            if (color !== null) {
+                const v = p.clone().sub(player.position);
+                const d = Vector2.fromAngle(player.direction);
+                const distance = v.dot(d);
+                const stripHeight = SCREEN_HEIGHT / distance;
+                const yOffset = (SCREEN_HEIGHT - stripHeight) * 0.5;
+                ctx.fillStyle = color.brightness(1 / distance).toStyle();
+                ctx.fillRect(x, yOffset, 1.0, stripHeight);
+            }
+        }
+    }
+    ctx.restore();
+}
+
+function renderGame(
+    ctx: CanvasRenderingContext2D,
+    player: Player,
+    scene: Scene,
+) {
+    const minimapPosition = Vector2.zero().add(canvasSize(ctx).scale(0.03));
+    const cellSize = ctx.canvas.width * 0.03;
+    const minimapSize = sceneSize(scene).scale(cellSize);
+
+    ctx.fillStyle = "#181818";
+    ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    renderScene(ctx, player, scene);
+    renderMinimap(ctx, player, minimapPosition, minimapSize, scene);
+}
+
 const scene: Scene = [
     [null, null, Color.cyan(), Color.purple(), null, null, null, null, null],
     [null, null, null, Color.yellow(), null, null, null, null, null],
@@ -223,6 +357,8 @@ const scene: Scene = [
     [null, null, null, null, null, null, null, null, null],
     [null, null, null, null, null, null, null, null, null],
     [null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null],
 ];
 
 (() => {
@@ -230,18 +366,12 @@ const scene: Scene = [
         "game",
     ) as HTMLCanvasElement | null;
     if (!gameCanvas) throw new Error("ERROR: canvas not found");
-    gameCanvas.width = 16 * FACTOR;
-    gameCanvas.height = 9 * FACTOR;
-
+    const factor = 80;
+    gameCanvas.width = 16 * factor;
+    gameCanvas.height = 9 * factor;
     const ctx = gameCanvas.getContext("2d");
     if (!ctx) throw new Error("ERROR: 2d context not supported");
     ctx.imageSmoothingEnabled = false;
-
-    ctx.fillStyle = "#121212";
-    ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-    const minimapPosition = Vector2.zero().add(canvasSize(ctx).scale(0.03));
-    const cellSize = ctx.canvas.width * 0.03;
-    const minimapSize = sceneSize(scene).scale(cellSize);
 
     const player = new Player(
         sceneSize(scene).mul(new Vector2(0.63, 0.63)),
@@ -313,7 +443,7 @@ const scene: Scene = [
         }
         player.direction = player.direction + angularVelocity * deltaTime;
         player.position.add(velocity.clone().scale(deltaTime));
-        renderMinimap(ctx, player, minimapPosition, minimapSize, scene);
+        renderGame(ctx, player, scene);
         window.requestAnimationFrame(frame);
     };
     window.requestAnimationFrame((timestamp) => {

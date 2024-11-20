@@ -3,7 +3,7 @@ const PLAYER_SPEED = 2;
 const NEAR_CLIPPING_PLANE = 0.5;
 const FAR_CLIPPING_PLANE = 20;
 const FOV = Math.PI * 0.5;
-const SCREEN_FACTOR = 10;
+const SCREEN_FACTOR = 30;
 const SCREEN_WIDTH = Math.floor(16 * SCREEN_FACTOR);
 const SCREEN_HEIGHT = Math.floor(9 * SCREEN_FACTOR);
 
@@ -103,11 +103,10 @@ class Vector2 {
         this.y /= that.y;
         return this;
     }
-    lerp(that: Vector2, t: number): Vector2 {
-        return new Vector2(
-            this.x + (that.x - this.x) * t,
-            this.y + (that.y - this.y) * t,
-        );
+    lerp(that: Vector2, t: number): this {
+        this.x = this.x + (that.x - this.x) * t;
+        this.y = this.y + (that.y - this.y) * t;
+        return this;
     }
     dot(that: Vector2): number {
         return this.x * that.x + this.y * that.y;
@@ -143,11 +142,7 @@ class Player {
             .add(Vector2.fromAngle(this.direction).scale(NEAR_CLIPPING_PLANE));
         const offsetLength = Math.tan(FOV * 0.5) * NEAR_CLIPPING_PLANE;
         const directionVector = Vector2.fromAngle(this.direction);
-        const scaledPerp = directionVector
-            .clone()
-            .rot90()
-            .norm()
-            .scale(offsetLength);
+        const scaledPerp = directionVector.rot90().norm().scale(offsetLength);
         const p1 = p.clone().sub(scaledPerp);
         const p2 = p.clone().add(scaledPerp);
         return [p1, p2];
@@ -252,25 +247,42 @@ function snap(x: number, dx: number): number {
 }
 
 function rayStep(p1: Vector2, p2: Vector2): Vector2 {
-    const d = p2.clone().sub(p1);
+    // y = k*x + c
+    // x = (y - c)/k
+    //
+    // p1 = (x1, y1)
+    // p2 = (x2, y2)
+    //
+    // | y1 = k*x1 + c
+    // | y2 = k*x2 + c
+    //
+    // dy = y2 - y1
+    // dx = x2 - x1
+    // c = y1 - k*x1
+    // k = dy/dx
     let p3 = p2;
-
-    if (d.x !== 0) {
-        const k = d.y / d.x;
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    if (dx !== 0) {
+        const k = dy / dx;
         const c = p1.y - k * p1.x;
-        const x3 = snap(p2.x, d.x);
-        const y3 = k * x3 + c;
-        p3 = new Vector2(x3, y3);
+
+        {
+            const x3 = snap(p2.x, dx);
+            const y3 = x3 * k + c;
+            p3 = new Vector2(x3, y3);
+        }
+
         if (k !== 0) {
-            const y3 = snap(p2.y, d.y);
+            const y3 = snap(p2.y, dy);
             const x3 = (y3 - c) / k;
-            const p3Candidate = new Vector2(x3, y3);
-            if (p2.sqrDistanceTo(p3Candidate) < p2.sqrDistanceTo(p3)) {
-                p3 = p3Candidate;
+            const p3t = new Vector2(x3, y3);
+            if (p2.sqrDistanceTo(p3t) < p2.sqrDistanceTo(p3)) {
+                p3 = p3t;
             }
         }
     } else {
-        const y3 = snap(p2.y, d.y);
+        const y3 = snap(p2.y, dy);
         const x3 = p2.x;
         p3 = new Vector2(x3, y3);
     }
@@ -305,17 +317,17 @@ function renderScene(
         const p = castRay(
             scene,
             player.position,
-            r1.lerp(r2, x / SCREEN_WIDTH),
+            r1.clone().lerp(r2, x / SCREEN_WIDTH),
         );
         const c = hittingCell(player.position, p);
         if (insideScene(scene, c)) {
             const color = scene[c.y][c.x];
             if (color !== null) {
-                const v = p.clone().sub(player.position);
+                const v = p.sub(player.position);
                 const d = Vector2.fromAngle(player.direction);
                 const distance = v.dot(d);
-                const stripHeight = SCREEN_HEIGHT / distance;
-                const yOffset = (SCREEN_HEIGHT - stripHeight) * 0.5;
+                const stripHeight = Math.floor(SCREEN_HEIGHT / distance);
+                const yOffset = Math.floor((SCREEN_HEIGHT - stripHeight) * 0.5);
                 ctx.fillStyle = color.brightness(1 / distance).toStyle();
                 ctx.fillRect(x, yOffset, 1.0, stripHeight);
             }
@@ -442,7 +454,7 @@ const scene: Scene = [
             angularVelocity += Math.PI;
         }
         player.direction = player.direction + angularVelocity * deltaTime;
-        player.position.add(velocity.clone().scale(deltaTime));
+        player.position.add(velocity.scale(deltaTime));
         renderGame(ctx, player, scene);
         window.requestAnimationFrame(frame);
     };
